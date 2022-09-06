@@ -20,6 +20,20 @@ import sys
 from http.cookies import SimpleCookie
 from pyarrow import flight
 
+class HttpDremioClientAuthHandler(flight.ClientAuthHandler):
+    def __init__(self, username, password):
+        super(flight.ClientAuthHandler, self).__init__()
+        self.basic_auth = flight.BasicAuth(username, password)
+        self.token = None
+
+    def authenticate(self, outgoing, incoming):
+        auth = self.basic_auth.serialize()
+        outgoing.write(auth)
+        self.token = incoming.read()
+
+    def get_token(self):
+        return self.token
+
 
 class DremioClientAuthMiddlewareFactory(flight.ClientMiddlewareFactory):
     """A factory that creates DremioClientAuthMiddleware(s)."""
@@ -160,6 +174,7 @@ def connect_to_dremio_flight_server_endpoint(host, port, username, password, que
     Connects to Dremio Flight server endpoint with the provided credentials.
     It also runs the query and retrieves the result set.
     """
+    legacy = True
     try:
         # Default to use an unencrypted TCP connection.
         scheme = "grpc+tcp"
@@ -203,6 +218,10 @@ def connect_to_dremio_flight_server_endpoint(host, port, username, password, que
 
             headers.append((b'authorization', "Bearer {}".format(pat_or_auth_token).encode('utf-8')))
             print('[INFO] Authentication skipped until first request')
+
+        elif legacy and username and password:
+            client = flight.FlightClient("{}://{}:{}".format(scheme, host, port), **connection_args)
+            client.authenticate(HttpDremioClientAuthHandler(username, password))
 
         elif username and password:
             client_auth_middleware = DremioClientAuthMiddlewareFactory()
